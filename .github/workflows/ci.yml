@@ -1,0 +1,22 @@
+name: macOS checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust and quality tools
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          python3 scripts/install-tools.py
+      - run: make check
+      - run: make native-asan
+      - run: make build
+  miri:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly-2026-10-19 --profile minimal --component miri --component rust-src
+      - run: cargo +nightly-2026-10-19 miri test --locked --lib
