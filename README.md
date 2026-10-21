@@ -2,17 +2,23 @@
 
 A macOS audio booster with keyboard controls. Rust handles the CLI, terminal, and private Unix socket; a small Objective-C/C bridge connects a Core Audio process tap to the built-in output and Apple's peak limiter.
 
-The MVP targets Apple Silicon, macOS 14.2 or later, built-in speakers, and wired headphones. Bluetooth, USB/Thunderbolt interfaces, multichannel output, automatic loudness leveling, login startup, and public distribution are outside its scope. Hardware acceptance is recorded in [docs/acceptance.md](docs/acceptance.md).
+The MVP targets Apple Silicon, macOS 14.2 or later, built-in speakers, and wired headphones connected directly to the Mac's 3.5 mm jack. HDMI/DisplayPort outputs (including monitor-connected soundbars), Bluetooth, USB/Thunderbolt interfaces, and multichannel output are outside its scope. Additional output support is planned as a separate integration. Automatic loudness leveling, login startup, and notarized binary distribution are also outside this MVP.
+
+This is an early source release. Automated checks and short live tests have passed on a Mac mini; the 30-minute stability run and several physical hardware checks remain incomplete. See the [acceptance record](docs/acceptance.md) for measured results and remaining checks.
 
 ## Install and run
 
-Install Xcode or its command-line tools and Rustup, then:
+Install Xcode or its command-line tools, Rustup, and Python 3, then:
 
 ```sh
+git clone https://github.com/benincasantonio/AudioBoostCLI.git
+cd AudioBoostCLI
 make tools
 make check
 make install
 ```
+
+Python is used for development tools, packaging, and integration tests. The installed CLI and background service run without Python.
 
 The toolchain file pins Rust **1.90.0**, Rust 2024, rustfmt, and Clippy. `Cargo.lock` pins the application dependencies. `make tools` downloads checksum-verified official binaries for nextest **0.9.148**, cargo-audit **0.22.2**, and cargo-deny **0.20.2** into `.tools/bin`; it does not upgrade the application compiler.
 
