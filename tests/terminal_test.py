@@ -74,7 +74,34 @@ class TerminalTests(unittest.TestCase):
         self.child = subprocess.Popen([str(BINARY)], stdin=self.slave, stdout=self.slave,
                                       stderr=subprocess.PIPE, env=environment)
         self.wait_for(lambda: self.state["state"] == "active", drain=False)
-        self.read_until(b"Ctrl-C")
+        return self.read_until(b"Ctrl-C")
+
+    def test_measurements_update_and_clear_after_output_loss(self):
+        self.state.update(latency_ms=17.17, buffer_frames=256)
+        output = self.launch()
+        self.assertIn(b"Reported pipeline latency: 17.2 ms", output)
+        self.assertIn(b"Playback buffer: 256 frames (5.3 ms)", output)
+        self.state.update(latency_ms=17.18, callbacks=100)
+        time.sleep(0.6)
+        self.assertFalse(select.select([self.master], [], [], 0)[0], "rounded latency redrew")
+        self.state.update(latency_ms=28.25, buffer_frames=512)
+        output = self.read_until(b"512 frames (10.7 ms)")
+        self.assertIn(b"Reported pipeline latency: 28.2 ms", output)
+        self.state.update(state="error", latency_ms=-1, buffer_frames=0, error="Output disconnected")
+        output = self.read_until(b"Output disconnected")
+        self.assertIn(b"Reported pipeline latency: unavailable", output)
+        self.assertIn(b"Playback buffer: unavailable", output)
+        self.assert_clean_exit(b"q")
+
+    def test_status_command_reports_measurements_and_older_reply(self):
+        self.state.update(state="active", latency_ms=17.17, buffer_frames=256)
+        environment = dict(os.environ, AUDIOBOOST_RUNTIME_DIR=self.directory.name)
+        output = subprocess.check_output([str(BINARY), "status"], env=environment, text=True)
+        self.assertIn("Reported pipeline latency: 17.2 ms", output)
+        self.assertIn("Playback buffer: 256 frames (5.3 ms)", output)
+        del self.state["buffer_frames"]
+        output = subprocess.check_output([str(BINARY), "status"], env=environment, text=True)
+        self.assertIn("Playback buffer: unavailable", output)
 
     def wait_for(self, condition, drain=True):
         deadline = time.monotonic() + 4

@@ -2,7 +2,29 @@
 
 Test host: Apple Silicon Mac mini, macOS 26.6.2. Rust 1.90.0. Local ad-hoc signed app launched through LaunchServices. Run date: 21 October 2026, Europe/Rome.
 
-## Recorded results
+## External-output integration
+
+The updated engine supports compatible built-in, HDMI/DisplayPort, USB, and Bluetooth/Bluetooth LE stereo outputs. Both terminal interfaces show reported pipeline latency and the latest playback buffer in frames and milliseconds. Results below apply to this integration; the original MVP record is retained separately.
+
+| Check | Result |
+|---|---|
+| Full `make check` | Passed: formatting, Clippy, 16 nextest tests, doctests, refreshed advisory/license checks, 8 PTY tests, 3 service tests, 3 acceptance-policy tests |
+| Native ASan/UBSan | Passed using Command Line Tools Clang 21, including maximum frame capacity, duplex routing, unsupported modes, reconnect, retry limits, permission failures, and teardown failures |
+| Miri | 7 Rust model tests passed with nightly-2026-10-19 |
+| Final release build and local signing | Passed; updated app installed locally |
+| Bluetooth smoke: HUAWEI FreeBuds 5i | Passed repeated start/stop and forced service termination at 0 dB |
+| Bluetooth continuous playback, before final recovery refinements | At +3 dB: 44.1 kHz, 256 frames (5.8 ms), 16.61 ms reported latency, no callback faults in the first 203 seconds; about 0.56% of one core and 25.73 MiB peak combined RSS |
+| Bluetooth listening | User reported dropping audio at the beginning of the checks, followed by good playback. Cause of startup drops not established; deliberate lifecycle checks also ran at the beginning |
+| Final-build live route switching | Passed: LG HDR 4K soundbar path, Sony Wireless Stereo Headset over USB, AUNA MIC-920 duplex USB output, built-in speakers, and HUAWEI FreeBuds 5i. Every switch reset gain to 0 dB; callbacks progressed with zero faults |
+| Final-build reported measurements | All routes used 256 frames. At 48 kHz: LG 22.33 ms, Sony/AUNA 18.25 ms, built-in 17.17 ms. FreeBuds at 44.1 kHz: 16.61 ms. These are pipeline reports, not acoustic measurements |
+| Unsupported-output transition and recovery | Passed: Steam Streaming Speakers released interception and cleared measurements; returning to FreeBuds resumed stereo at 0 dB |
+| 30-minute stability | Incomplete: initial Bluetooth service/socket disappeared after approximately 3 minutes. macOS recorded a clean exit; user was unsure whether they stopped the shared service. Cause remains unconfirmed. No completed 30-minute integration run on any route |
+| Remaining physical checks | Paused at the user's request: sustained stability, disconnect/reconnect, Bluetooth microphone/call-mode transitions, sleep/wake, full stereo/feedback/listening comparisons, and external sample-rate changes. Offline recovery tests passed; these do not replace physical checks |
+| Physical added latency | Not independently measured; reported latency does not measure the complete Bluetooth acoustic path |
+
+The final-build route measurements are recorded in `target/acceptance/route-smoke.json` (local, untracked). No live audio test is left running. Permission-denial checks on physical hardware remain pending; permission failure handling is covered offline.
+
+## Original MVP results
 
 | Check | Result |
 |---|---|
@@ -35,12 +57,13 @@ The initial live latency check failed at 27.83 ms. Configuring the private aggre
 Run these one at a time. Start from `audioboost stop`; use familiar material and a comfortable system volume. Do not alter output or sample rate during the fixed-format stability benchmark.
 
 1. **Permission denial:** use System Settings to revoke AudioBoost's system-audio access. Run `python3 scripts/hardware-test.py --expect-permission-denial`, deny any prompt, and verify ordinary playback remains audible. Re-enable permission before other tests. Do not reset unrelated applications' permissions.
-2. **Speakers and wired headphones:** start at +3 dB on speakers. Plug in wired headphones and select them as the default output if macOS does not. Confirm the displayed device changes, gain resets to 0 dB, and playback continues. Repeat unplugging headphones. Switch to an unsupported Bluetooth/USB output and verify interception is released and an unsupported-output error appears; return to built-in output and confirm gain 0 dB.
+2. **Output switching:** start at +3 dB on speakers. Select the monitor/soundbar, USB wireless headset, and Bluetooth stereo output in macOS in turn. Confirm the displayed device changes, gain resets to 0 dB, fresh latency and buffer values appear, and playback continues. Repeat wired-headphone plug/unplug and external-device disconnect/reconnect. On a duplex device, confirm microphone input is never played through the boost path. Select a virtual or multichannel output and verify interception is released; return to supported stereo and confirm automatic recovery at 0 dB.
 3. **Sleep/wake:** start playback and boosting, put the Mac to sleep, then wake it. Confirm a rebuilt active graph, progressing callback count, unchanged gain on the same output, and no persistent silence. If the output changed while sleeping, gain must be 0 dB. Stop and confirm ordinary playback.
 4. **Feedback exclusion:** play a short signal or recording at +3 dB, then stop the source. The output must decay to silence, without repeating or increasing echoes. Repeat gain changes while playing independent left/right content; confirm stereo placement remains intact.
 5. **Listening:** compare a quiet recording at 0, +3, and +6 dB. Repeat with already-loud, transient-heavy material. Quiet material should gain useful level; loud material may gain less because the limiter protects the ceiling. Reject audible clicks during changes, pumping, harsh distortion, channel collapse, or interruptions. Record the material and listener's result without recording captured system audio.
-6. **Stability:** run `python3 scripts/benchmark.py --seconds 1800 --with-ui --gain-db 3` with real playback. The report must show no callback faults or stalls, average CPU below 2% of one core, maximum sampled combined RSS below 50 MiB, and reported pipeline latency at most 20 ms. Record any audible gaps separately. Reports contain the tested executable's SHA-256.
+6. **Stability:** run `python3 scripts/benchmark.py --seconds 1800 --with-ui --gain-db 3` with real playback on each supported hardware route. The report must show no callback faults or stalls, average CPU below 2% of one core, and maximum sampled combined RSS below 50 MiB. Built-in outputs require reported latency at most 20 ms; external latency is recorded without a default ceiling. Use `--max-latency-ms N` for an explicit external threshold. Keep the same device and sample rate throughout each run. Record audible gaps separately. Reports contain device UID, transport, observed frame-count bounds, and the tested executable's SHA-256.
 7. **Physical latency:** compare the timing of the same transient with boosting stopped and active through the same built-in or wired output. Measure with an independent timing/loopback setup and subtract the baseline device path; include all buffering and limiter delay. Require added latency at most 20 ms at both 44.1 and 48 kHz. Core Audio timestamps alone cannot certify this result. External measurement equipment is a test fixture, not an additional supported playback device.
+8. **Bluetooth call mode:** while boosting stereo playback, open an app that uses the headset microphone. If the route becomes mono or otherwise unsupported, confirm boosting suspends, measurements become unavailable, and ordinary playback continues. Release the microphone and confirm stereo boosting resumes at 0 dB without restarting AudioBoost. Keep the default macOS input unchanged after the test.
 
 ## Regression history
 
