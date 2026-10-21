@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import socket
@@ -11,6 +12,25 @@ import tempfile
 
 BINARY = Path.home() / ".local/bin/audioboost"
 RUNTIME = Path(os.environ.get("AUDIOBOOST_RUNTIME_DIR", Path(tempfile.gettempdir()) / f"audioboost-{os.geteuid()}"))
+
+def device_info(*arguments):
+    root = Path(__file__).resolve().parents[1]
+    helper = root / "target/native/device-test-tool"
+    source = root / "native/device_test_tool.c"
+    if not helper.exists() or helper.stat().st_mtime < source.stat().st_mtime:
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["xcrun", "clang", "-Wall", "-Wextra", "-Werror", str(source),
+                        "-framework", "CoreAudio", "-framework", "CoreFoundation", "-o", str(helper)], check=True)
+    return json.loads(subprocess.check_output([str(helper), *arguments], text=True))
+
+def latency_limit(device, override):
+    return override if override is not None else (20.0 if device["built_in"] else None)
+
+def positive_latency(value):
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("latency limit must be a finite positive number")
+    return value
 
 def request(command):
     with socket.socket(socket.AF_UNIX) as connection:

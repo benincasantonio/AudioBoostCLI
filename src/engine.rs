@@ -17,6 +17,7 @@ struct NativeStatus {
     faults: u64,
     gain_db: f32,
     active: u32,
+    buffer_frames: u32,
     device: [c_char; 256],
     error: [c_char; 512],
 }
@@ -81,6 +82,7 @@ impl Engine {
             faults: 0,
             gain_db: 0.0,
             active: 0,
+            buffer_frames: 0,
             device: [0; 256],
             error: [0; 512],
         };
@@ -112,6 +114,7 @@ impl Engine {
             device: text(&status.device),
             sample_rate: status.sample_rate,
             latency_ms: status.latency_ms,
+            buffer_frames: status.buffer_frames,
             callbacks: status.callbacks,
             faults: status.faults,
             error,
