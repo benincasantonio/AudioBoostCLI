@@ -26,7 +26,7 @@ Test host: Apple Silicon Mac mini, macOS 26.6.2. Rust 1.90.0. Local ad-hoc signe
 | Wired headphone transitions | Not yet exercised on this host |
 | Sleep/wake with playback | Implemented; physical sleep/wake test pending |
 | Explicit permission denial | Permission guard implemented; denial test pending |
-| Remote macOS CI | Configured; not executed remotely in this session |
+| Remote macOS CI | Passed on GitHub's macOS runner: verification, native ASan/UBSan, release build, and Miri ([initial public run](https://github.com/benincasantonio/AudioBoostCLI/actions/runs/39552736886), commit `c82334f`) |
 
 The initial live latency check failed at 27.83 ms. Configuring the private aggregate for at most 256 frames reduced the measured timestamp-plus-limiter delay to 17.17 ms, and the live regression then passed. A first unanswered macOS permission prompt caused a Core Audio timeout; after authorization, live start succeeded.
 
