@@ -45,6 +45,8 @@ pub(crate) struct Status {
     pub device: String,
     pub sample_rate: f64,
     pub latency_ms: f64,
+    #[serde(default)]
+    pub buffer_frames: u32,
     pub callbacks: u64,
     pub faults: u64,
     pub error: String,
@@ -59,10 +61,37 @@ impl Default for Status {
             device: String::new(),
             sample_rate: 0.0,
             latency_ms: 0.0,
+            buffer_frames: 0,
             callbacks: 0,
             faults: 0,
             error: String::new(),
             pid: 0,
+        }
+    }
+}
+
+impl Status {
+    pub fn latency_text(&self) -> String {
+        if self.state == "active" && self.latency_ms.is_finite() && self.latency_ms > 0.0 {
+            format!("{:.1} ms", self.latency_ms)
+        } else {
+            "unavailable".into()
+        }
+    }
+
+    pub fn buffer_text(&self) -> String {
+        if self.state == "active"
+            && self.buffer_frames > 0
+            && self.sample_rate.is_finite()
+            && self.sample_rate > 0.0
+        {
+            format!(
+                "{} frames ({:.1} ms)",
+                self.buffer_frames,
+                f64::from(self.buffer_frames) * 1000.0 / self.sample_rate
+            )
+        } else {
+            "unavailable".into()
         }
     }
 }
@@ -126,6 +155,35 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measurements_require_fresh_active_status_and_accept_older_replies() {
+        let mut status = Status {
+            state: "active".into(),
+            sample_rate: 48000.0,
+            latency_ms: 17.17,
+            buffer_frames: 256,
+            ..Status::default()
+        };
+        assert_eq!(status.latency_text(), "17.2 ms");
+        assert_eq!(status.buffer_text(), "256 frames (5.3 ms)");
+        let mut old = serde_json::to_value(&status).unwrap();
+        old.as_object_mut().unwrap().remove("buffer_frames");
+        assert_eq!(
+            serde_json::from_value::<Status>(old).unwrap().buffer_frames,
+            0
+        );
+        for state in ["sleeping", "error", "idle", "stopped"] {
+            status.state = state.into();
+            assert_eq!(status.latency_text(), "unavailable");
+            assert_eq!(status.buffer_text(), "unavailable");
+        }
+        status.state = "active".into();
+        status.latency_ms = -1.0;
+        status.buffer_frames = 0;
+        assert_eq!(status.latency_text(), "unavailable");
+        assert_eq!(status.buffer_text(), "unavailable");
+    }
 
     fn parse(args: &[&str]) -> Result<Command, String> {
         Command::parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())

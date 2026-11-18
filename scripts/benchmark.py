@@ -11,7 +11,7 @@ import select
 import subprocess
 import threading
 import time
-from live_support import BINARY, command, hardware_session, request
+from live_support import BINARY, command, device_info, hardware_session, latency_limit, positive_latency, request
 
 def cpu_seconds(value):
     parts = value.split(":")
@@ -37,12 +37,14 @@ def drain_terminal(master, done):
             except OSError:
                 return
 
-def measure(seconds, with_ui, gain):
+def measure(seconds, with_ui, gain, max_latency_ms):
     ui = None
     master = slave = None
     done = threading.Event()
     reader = None
     try:
+        output = device_info()
+        maximum_allowed = latency_limit(output, max_latency_ms)
         command("start", "--gain-db", str(gain))
         if with_ui:
             master, slave = pty.openpty()
@@ -56,6 +58,8 @@ def measure(seconds, with_ui, gain):
         cpu = 0.0
         peak_rss = 0
         maximum_latency = 0.0
+        minimum_frames = 16384
+        maximum_frames = 0
         last_callbacks = initial["callbacks"]
         samples = 0
         while time.monotonic() - started < seconds:
@@ -66,13 +70,17 @@ def measure(seconds, with_ui, gain):
             assert status["faults"] == initial["faults"] == 0, status
             assert status["callbacks"] > last_callbacks, "callbacks stalled"
             assert status["sample_rate"] == initial["sample_rate"], "sample rate changed during benchmark"
+            assert device_info()["uid"] == output["uid"], "output changed during benchmark"
             assert status["pid"] in current, "service missing from resource measurement"
             if ui:
                 assert ui.poll() is None and ui.pid in current, "terminal process exited"
             assert status["latency_ms"] > 0, "Core Audio did not report valid timestamps"
+            assert 0 < status["buffer_frames"] <= 16384, "invalid playback buffer size"
             cpu += sum(max(0, values["cpu"] - previous.get(pid, {"cpu": 0})["cpu"]) for pid, values in current.items())
             peak_rss = max(peak_rss, sum(values["rss"] for values in current.values()))
             maximum_latency = max(maximum_latency, status["latency_ms"])
+            minimum_frames = min(minimum_frames, status["buffer_frames"])
+            maximum_frames = max(maximum_frames, status["buffer_frames"])
             previous = current
             last_callbacks = status["callbacks"]
             samples += 1
@@ -85,14 +93,17 @@ def measure(seconds, with_ui, gain):
                       seconds=elapsed, with_ui=with_ui, gain_db=gain, device=initial["device"], sample_rate=initial["sample_rate"],
                       average_cpu_percent_one_core=average_cpu, peak_combined_rss_mib=peak_rss / 1048576,
                       maximum_reported_pipeline_latency_ms=maximum_latency, callback_faults=0,
+                      device_uid=output["uid"], transport=output["transport"],
+                      minimum_playback_buffer_frames=minimum_frames, maximum_playback_buffer_frames=maximum_frames,
+                      reported_latency_limit_ms=maximum_allowed,
                       resource_limits_pass=average_cpu < 2 and peak_rss < 50 * 1048576,
-                      reported_latency_limit_pass=maximum_latency <= 20,
+                      reported_latency_limit_pass=maximum_latency <= maximum_allowed if maximum_allowed is not None else None,
                       physical_added_latency_verified=False)
         print(json.dumps(result, indent=2), flush=True)
         destination = Path(__file__).resolve().parents[1] / "target/acceptance"
         destination.mkdir(parents=True, exist_ok=True)
         (destination / f"benchmark-{int(time.time())}.json").write_text(json.dumps(result, indent=2) + "\n")
-        if not result["resource_limits_pass"] or not result["reported_latency_limit_pass"]:
+        if not result["resource_limits_pass"] or result["reported_latency_limit_pass"] is False:
             raise SystemExit("acceptance limits exceeded")
     finally:
         if ui:
@@ -103,6 +114,9 @@ def measure(seconds, with_ui, gain):
                 except subprocess.TimeoutExpired:
                     ui.kill()
                     ui.wait()
+            diagnostics = ui.stderr.read().decode(errors="replace").strip()
+            if diagnostics:
+                print(f"Terminal diagnostics: {diagnostics}", flush=True)
             ui.stderr.close()
             done.set()
             reader.join(timeout=1)
@@ -114,11 +128,12 @@ def main():
     parser.add_argument("--seconds", type=int, default=1800)
     parser.add_argument("--with-ui", action="store_true")
     parser.add_argument("--gain-db", type=int, choices=range(13), default=0)
+    parser.add_argument("--max-latency-ms", type=positive_latency, help="override the reported latency limit (default: 20 ms built-in, no limit external)")
     args = parser.parse_args()
     if args.seconds < 1:
         parser.error("seconds must be positive")
     with hardware_session():
-        measure(args.seconds, args.with_ui, args.gain_db)
+        measure(args.seconds, args.with_ui, args.gain_db, args.max_latency_ms)
 
 if __name__ == "__main__":
     main()

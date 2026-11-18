@@ -19,6 +19,7 @@ typedef struct {
     uint64_t faults;
     float gain_db;
     uint32_t active; // 0: idle/error, 1: active, 2: sleeping
+    uint32_t buffer_frames;
     char device[256];
     char error[512];
 } ABStatus;

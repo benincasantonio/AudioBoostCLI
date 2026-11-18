@@ -16,3 +16,4 @@ if command -v rtk >/dev/null; then runner=(rtk cargo); else runner=(cargo); fi
 "${runner[@]}" build --locked
 python3 tests/terminal_test.py
 python3 tests/service_test.py
+python3 tests/hardware_tools_test.py

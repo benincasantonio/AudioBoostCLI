@@ -1,8 +1,8 @@
 # AudioBoostCLI
 
-A macOS audio booster with keyboard controls. Rust handles the CLI, terminal, and private Unix socket; a small Objective-C/C bridge connects a Core Audio process tap to the built-in output and Apple's peak limiter.
+A macOS audio booster with keyboard controls. Rust handles the CLI, terminal, and private Unix socket; a small Objective-C/C bridge connects a Core Audio process tap to the selected output and Apple's peak limiter.
 
-The MVP targets Apple Silicon, macOS 14.2 or later, built-in speakers, and wired headphones connected directly to the Mac's 3.5 mm jack. HDMI/DisplayPort outputs (including monitor-connected soundbars), Bluetooth, USB/Thunderbolt interfaces, and multichannel output are outside its scope. Additional output support is planned as a separate integration. Automatic loudness leveling, login startup, and notarized binary distribution are also outside this MVP.
+The app targets Apple Silicon and macOS 14.2 or later. It supports compatible Float32 stereo outputs over built-in hardware (including the Mac's headphone jack), HDMI/DisplayPort (including monitor-connected soundbars), USB (including wireless headset dongles), and Bluetooth/Bluetooth LE. Select the output in macOS; AudioBoost follows it automatically. Bluetooth call modes that no longer expose stereo PCM suspend boosting until stereo returns. Multichannel output, format conversion, Thunderbolt, AirPlay, virtual/user-created aggregate outputs, automatic loudness leveling, login startup, and notarized binary distribution remain outside its scope.
 
 This is an early source release. Automated checks and short live tests have passed on a Mac mini; the 30-minute stability run and several physical hardware checks remain incomplete. See the [acceptance record](docs/acceptance.md) for measured results and remaining checks.
 
@@ -35,20 +35,22 @@ On the first start, allow **AudioBoost** in the macOS system-audio recording pro
 | `audioboost` | Enable boosting and open keyboard controls; attach to an active service without changing its gain. |
 | `audioboost start [--gain-db N]` | Start detached processing; a fresh start defaults to +3 dB. An already-active service keeps its gain. |
 | `audioboost gain N` | Set a finite gain between 0 and 12 dB. |
-| `audioboost status` | Show state, gain, device, sample rate, pipeline latency, callback counters, PID, and engine error. |
+| `audioboost status` | Show state, gain, device, sample rate, reported pipeline latency, playback buffer size, callback counters, PID, and engine error. |
 | `audioboost stop` | Stop the service and release playback interception. Safe to repeat. |
 
 **↑ / →** add 1 dB; **↓ / ←** subtract 1 dB, clamped to 0–12 dB. **Q or Ctrl-C stops boosting**, even when attaching to an existing background service. The default command requires interactive stdin and stdout and checks this before starting audio. Use the scripting commands in pipes and automation.
 
-Explicit background mode survives terminal closure. Gain is not persisted across service runs. Switching between supported default outputs resets gain to 0 dB. Format changes and waking from sleep rebuild the graph; unsupported outputs release interception and show an error.
+Both the interactive display and `status` report pipeline latency in milliseconds and the latest valid playback buffer in frames and milliseconds, for example `256 frames (5.3 ms)` at 48 kHz. These are separate measurements; buffer duration is not added to the latency report. Measurements show `unavailable` until a fresh callback arrives, and while sleeping, rebuilding, or suspended. The UI polls every 250 ms and redraws only when displayed values change.
+
+Explicit background mode survives terminal closure. Gain is not persisted across service runs. Output changes, disconnection, and unsupported-mode interruptions reset gain to 0 dB. Ordinary format changes and waking from sleep on the same output preserve gain. Unsupported outputs release interception and show an error. The service continues observing the route and retries transient setup failures at most once per second. Permission failures and DSP failures require an explicit restart; failed interactive starts still stop their service.
 
 ## Audio and lifecycle
 
-The private, device-specific tap excludes the service's Core Audio process object. Its `mutedWhenTapped` setting intercepts original playback only while the aggregate reads the tap. The private aggregate uses the physical output as its clock source. A permission probe precedes interception, and failed starts and render errors tear down the graph.
+The private, device-specific tap excludes the service's Core Audio process object. Its `mutedWhenTapped` setting intercepts original playback only while the aggregate reads the tap. The private aggregate uses the physical output as its clock source. On devices with microphone inputs, the engine maps only the appended playback-tap buffers and disables hardware input streams for its callback. A permission probe precedes interception, and failed starts and render errors tear down the graph.
 
 The native path accepts Float32 stereo at the output's current rate. Gain changes ramp over 20 ms. Apple's peak limiter uses a 5 ms attack and 50 ms release. A compensated +1 dB pre-scale and −1 dB post-scale set a −1 dBFS sample-peak ceiling while preserving requested gain below limiting. This is sample-peak limiting, not true-peak or loudness normalization.
 
-Buffers are allocated before processing. The callback has no application allocation, locks, logging, or IPC. A private aggregate buffer of at most 256 frames limits delay; if configuring it changes the physical device's buffer size, normal teardown restores the previous size unless another client has since changed it. Core Audio and IOKit notifications handle device changes and sleep/wake. Control operations and cleanup stay on one thread; the audio thread exchanges only lock-free atomic values and preallocated samples.
+Buffers are allocated before processing. The callback has no application allocation, locks, logging, or IPC. Built-in outputs retain a private aggregate buffer of at most 256 frames. External outputs request a supported size near that target and can use their working size when adjustment is unavailable. Actual and variable maximum sizes must fit the 16,384-frame preallocated capacity. If configuring the aggregate changes the physical device's buffer size, normal teardown restores the previous size unless another client has since changed it. Core Audio and IOKit notifications handle device changes and sleep/wake. Control operations and cleanup stay on one thread; the audio thread exchanges only lock-free atomic values and preallocated samples.
 
 The socket lives in a mode-0700 per-user temporary directory and is mode 0600. Both ends verify peer ownership. Messages are newline-delimited JSON with a 4096-byte bound and timeouts. A retained file lock prevents concurrent service owners; stale sockets are recovered on restart. `AUDIOBOOST_RUNTIME_DIR` isolates test services; normal LaunchServices launches use the default location.
 
@@ -67,7 +69,7 @@ rtk cargo deny check
 
 It then builds the debug CLI and runs the Python pseudo-terminal and real-service lifecycle tests. Doctests remain separate because [nextest does not run them](https://nexte.st/docs/running/). Advisory downloads are required; unavailable databases or failed checks are failures. License allowances cover the current permissive dependencies, unapproved sources are denied, and duplicate versions generate warnings.
 
-Normal tests never intercept or play system audio. They cover argument validation, gain bounds, IPC framing and ownership, keyboard controls, polling/redraw behavior, terminal restoration, resize, concurrent services, disconnected clients, and restart after termination. Native offline tests exercise 44.1/48 kHz gain, the complete smoothing ramp, stereo, silence, transients, sustained limiting, and the output ceiling.
+Normal tests never intercept or play system audio. They cover argument validation, gain bounds, IPC framing and ownership, keyboard controls, measurement display and redraws, terminal restoration, resize, concurrent services, disconnected clients, and restart after termination. Native offline tests exercise 44.1/48 kHz DSP and the output ceiling, duplex tap routing, format eligibility, rejected buffer requests, mode changes, reconnects, permission failures, and teardown failures using a simulated HAL.
 
 ```sh
 make native-asan
@@ -93,7 +95,7 @@ python3 scripts/hardware-test.py --sample-rates
 python3 scripts/benchmark.py --seconds 1800 --with-ui --gain-db 3
 ```
 
-The format test temporarily selects 44.1 and 48 kHz and restores the original rate. The benchmark measures cumulative process CPU time and combined RSS, includes the interface, requires progressing callbacks without faults, and writes a JSON result under `target/acceptance/`. Its limits are CPU **<2% of one core**, RSS **<50 MiB**, and reported pipeline latency **≤20 ms**. Run it with real playback, then repeat without `--with-ui` to isolate background mode.
+The format test selects only advertised 44.1/48 kHz rates and restores the original rate. The benchmark measures cumulative process CPU time and combined RSS, includes the interface, requires the same output and sample rate with progressing callbacks and no faults, and writes a JSON result under `target/acceptance/`. Its limits are CPU **<2% of one core** and RSS **<50 MiB**. Built-in outputs also require reported pipeline latency **≤20 ms**; external outputs record latency without imposing that threshold. Both scripts accept `--max-latency-ms N` to require an explicit limit. Reports include device identity, transport, and observed buffer-size bounds. Run with real playback, then repeat without `--with-ui` to isolate background mode.
 
 The latency report includes the Core Audio input/output timestamp difference and the Audio Unit's reported limiter delay. It is not an independent physical measurement of added latency; the acceptance procedure covers that distinction. Headphone changes, sleep/wake, permission denial, and listening comparisons also need the explicit procedures in [docs/acceptance.md](docs/acceptance.md).
 

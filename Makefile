@@ -17,6 +17,7 @@ test:
 	cargo test --locked --all-targets
 	python3 tests/terminal_test.py
 	python3 tests/service_test.py
+	python3 tests/hardware_tools_test.py
 
 native-asan:
 	bash scripts/native-asan.sh

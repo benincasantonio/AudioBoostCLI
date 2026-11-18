@@ -101,12 +101,13 @@ fn stop(dir: &Path) -> Result<()> {
 
 fn print_status(status: &Status) {
     println!(
-        "State: {}\nGain: +{:.1} dB\nOutput: {}\nSample rate: {:.0} Hz\nReported pipeline latency: {:.2} ms\nCallbacks: {}\nFaults: {}\nPID: {}",
+        "State: {}\nGain: +{:.1} dB\nOutput: {}\nSample rate: {:.0} Hz\nReported pipeline latency: {}\nPlayback buffer: {}\nCallbacks: {}\nFaults: {}\nPID: {}",
         status.state,
         status.gain_db,
         status.device,
         status.sample_rate,
-        status.latency_ms,
+        status.latency_text(),
+        status.buffer_text(),
         status.callbacks,
         status.faults,
         status.pid

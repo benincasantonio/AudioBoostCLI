@@ -58,11 +58,13 @@ fn render(status: &Status) -> Result<()> {
     let clean = |s: &str| s.chars().filter(|c| !c.is_control()).collect::<String>();
     write!(
         stdout,
-        "AudioBoost\r\n\r\nGain: +{:.1} dB    State: {}\r\nOutput: {}\r\nSample rate: {:.0} Hz\r\n\r\nUp/Right +1 dB   Down/Left -1 dB\r\nQ or Ctrl-C: stop boosting and exit\r\n",
+        "AudioBoost\r\n\r\nGain: +{:.1} dB    State: {}\r\nOutput: {}\r\nSample rate: {:.0} Hz\r\nReported pipeline latency: {}\r\nPlayback buffer: {}\r\n\r\nUp/Right +1 dB   Down/Left -1 dB\r\nQ or Ctrl-C: stop boosting and exit\r\n",
         status.gain_db,
         clean(&status.state),
         clean(&status.device),
-        status.sample_rate
+        status.sample_rate,
+        status.latency_text(),
+        status.buffer_text()
     )?;
     if !status.error.is_empty() {
         write!(stdout, "\r\n{}\r\n", clean(&status.error))?;
@@ -122,11 +124,36 @@ fn display_changed(previous: &Status, current: &Status) -> bool {
         || previous.state != current.state
         || previous.error != current.error
         || previous.sample_rate != current.sample_rate
+        || previous.latency_text() != current.latency_text()
+        || previous.buffer_text() != current.buffer_text()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn measurements_redraw_only_when_the_display_changes() {
+        let previous = Status {
+            state: "active".into(),
+            sample_rate: 48000.0,
+            latency_ms: 17.17,
+            buffer_frames: 256,
+            ..Status::default()
+        };
+        let mut current = previous.clone();
+        current.latency_ms = 17.18;
+        current.callbacks += 1;
+        assert!(!display_changed(&previous, &current));
+        current.latency_ms = 17.26;
+        assert!(display_changed(&previous, &current));
+        current = previous.clone();
+        current.buffer_frames = 512;
+        assert!(display_changed(&previous, &current));
+        current = previous.clone();
+        current.latency_ms = -1.0;
+        current.buffer_frames = 0;
+        assert!(display_changed(&previous, &current));
+    }
     #[test]
     fn arrow_keys_and_quit_have_unambiguous_actions() {
         for code in [KeyCode::Up, KeyCode::Right] {
